@@ -54,8 +54,11 @@ export default function Register() {
           grade_level: form.grade_level,
           section_id: form.section_id,
           subject_ids: form.subject_ids,
+          final_ban: false,               // ← FIX
+          academic_status: 'regular',     // ← FIX
+          current_semester: 1,            // ← FIX
+          graduation_eligible: true,      // ← FIX
           created_at: new Date().toISOString(),
-          final_ban: false,
         };
         db.students.add(student);
       } else {
