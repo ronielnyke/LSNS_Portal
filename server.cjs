@@ -135,7 +135,6 @@ const server = http.createServer((req, res) => {
 });
 
 async function startTunnel(port) {
-  // Try localtunnel first (FREE, no signup needed)
   try {
     const localtunnel = require('localtunnel');
     const tunnel = await localtunnel({ port });
@@ -150,7 +149,6 @@ async function startTunnel(port) {
     console.log('==========================================');
     return tunnel;
   } catch (ltErr) {
-    // Try ngrok fallback
     try {
       const ngrok = require('ngrok');
       const url = await ngrok.connect({ addr: port, authtoken: process.env.NGROK_AUTH_TOKEN });
@@ -191,7 +189,6 @@ findAvailablePort(PORT, (availablePort) => {
     console.log('Admin Login: admin@school.edu / admin123');
     console.log('');
 
-    // Start public tunnel
     await startTunnel(availablePort);
 
     const { exec } = require('child_process');
