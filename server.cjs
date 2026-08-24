@@ -1,9 +1,16 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const PORT = 8080;
 const DIST = path.join(__dirname, 'dist');
+const DATA_FILE = path.join(__dirname, 'data.json');
+
+// Shared storage
+if (!fs.existsSync(DATA_FILE)) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify({}));
+}
 
 const mimeTypes = {
   '.html': 'text/html',
@@ -11,7 +18,8 @@ const mimeTypes = {
   '.css': 'text/css',
   '.json': 'application/json',
   '.png': 'image/png',
-  '.png': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
@@ -20,9 +28,22 @@ const mimeTypes = {
   '.ttf': 'font/ttf',
 };
 
+function getNetworkIPs() {
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+  for (const name in interfaces) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        ips.push(iface.address);
+      }
+    }
+  }
+  return ips;
+}
+
 function findAvailablePort(startPort, callback) {
   const server = http.createServer();
-  server.listen(startPort, () => {
+  server.listen(startPort, '0.0.0.0', () => {
     const port = server.address().port;
     server.close(() => callback(port));
   });
@@ -31,7 +52,71 @@ function findAvailablePort(startPort, callback) {
   });
 }
 
+function readData() {
+  try {
+    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeData(data) {
+  const tmp = DATA_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, DATA_FILE);
+}
+
 const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+
+  // Shared Storage API
+  if (req.url.startsWith('/api/')) {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const key = url.pathname.replace('/api/', '');
+
+    if (req.method === 'GET') {
+      const data = readData();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data[key] ?? null));
+      return;
+    }
+
+    if (req.method === 'POST' || req.method === 'PUT') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        const data = readData();
+        try {
+          data[key] = JSON.parse(body);
+        } catch {
+          data[key] = body;
+        }
+        writeData(data);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      });
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      const data = readData();
+      delete data[key];
+      writeData(data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+      return;
+    }
+  }
+
+  // Static files (SPA fallback)
   let filePath = path.join(DIST, req.url === '/' ? 'index.html' : req.url);
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
     filePath = path.join(DIST, 'index.html');
@@ -44,22 +129,71 @@ const server = http.createServer((req, res) => {
       res.end('Server Error');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType, 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(200, { 'Content-Type': contentType });
     res.end(content, 'utf-8');
   });
 });
 
+async function startTunnel(port) {
+  // Try localtunnel first (FREE, no signup needed)
+  try {
+    const localtunnel = require('localtunnel');
+    const tunnel = await localtunnel({ port });
+    console.log('');
+    console.log('==========================================');
+    console.log('  INTERNET PUBLIC URL (SHARE THIS)');
+    console.log('==========================================');
+    console.log('  ' + tunnel.url);
+    console.log('==========================================');
+    console.log('  Kahit mobile data o ibang WiFi —');
+    console.log('  buksan lang ang link na ito.');
+    console.log('==========================================');
+    return tunnel;
+  } catch (ltErr) {
+    // Try ngrok fallback
+    try {
+      const ngrok = require('ngrok');
+      const url = await ngrok.connect({ addr: port, authtoken: process.env.NGROK_AUTH_TOKEN });
+      console.log('');
+      console.log('==========================================');
+      console.log('  INTERNET PUBLIC URL (SHARE THIS)');
+      console.log('==========================================');
+      console.log('  ' + url);
+      console.log('==========================================');
+      return { url, close: () => ngrok.disconnect() };
+    } catch (ngErr) {
+      console.log('');
+      console.log('==========================================');
+      console.log('  LOCAL NETWORK ONLY (SAME WIFI)');
+      console.log('==========================================');
+      console.log('  Para sa INTERNET/MOBILE DATA access:');
+      console.log('  1. Run: npm install localtunnel');
+      console.log('  2. Run ulit: node server.js');
+      console.log('==========================================');
+      return null;
+    }
+  }
+}
+
 findAvailablePort(PORT, (availablePort) => {
-  server.listen(availablePort, () => {
+  server.listen(availablePort, '0.0.0.0', async () => {
+    const ips = getNetworkIPs();
     console.log('');
     console.log('==========================================');
     console.log('  SERVER RUNNING SUCCESSFULLY');
     console.log('==========================================');
-    console.log('  URL: http://localhost:' + availablePort);
+    console.log('  Local:   http://localhost:' + availablePort);
+    ips.forEach(ip => {
+      console.log('  Network: http://' + ip + ':' + availablePort);
+    });
     console.log('==========================================');
     console.log('');
     console.log('Admin Login: admin@school.edu / admin123');
     console.log('');
+
+    // Start public tunnel
+    await startTunnel(availablePort);
+
     const { exec } = require('child_process');
     const url = 'http://localhost:' + availablePort;
     exec('start "" "' + url + '"', (err) => {
