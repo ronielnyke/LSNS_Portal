@@ -2,30 +2,22 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { exec } = require('child_process');
 
 const PORT = 8080;
 const DIST = path.join(__dirname, 'dist');
 const DATA_FILE = path.join(__dirname, 'data.json');
 
-// Shared storage
+// Init data file
 if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({}));
+  fs.writeFileSync(DATA_FILE, JSON.stringify({ students: [], subjects: [] }, null, 2));
 }
 
 const mimeTypes = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
+  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+  '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
 };
 
 function getNetworkIPs() {
@@ -33,7 +25,7 @@ function getNetworkIPs() {
   const ips = [];
   for (const name in interfaces) {
     for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
+      if ((iface.family === 'IPv4' || iface.family === 4) && !iface.internal) {
         ips.push(iface.address);
       }
     }
@@ -42,28 +34,26 @@ function getNetworkIPs() {
 }
 
 function findAvailablePort(startPort, callback) {
-  const server = http.createServer();
-  server.listen(startPort, '0.0.0.0', () => {
-    const port = server.address().port;
-    server.close(() => callback(port));
+  const testServer = http.createServer();
+  testServer.listen(startPort, '0.0.0.0', () => {
+    const port = testServer.address().port;
+    testServer.close(() => callback(port));
   });
-  server.on('error', () => {
-    findAvailablePort(startPort + 1, callback);
-  });
+  testServer.on('error', () => findAvailablePort(startPort + 1, callback));
 }
 
 function readData() {
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
+  catch { return { students: [], subjects: [] }; }
 }
 
 function writeData(data) {
-  const tmp = DATA_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, DATA_FILE);
+  try { fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2)); }
+  catch (err) { console.error('Write error:', err.message); }
+}
+
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
 const server = http.createServer((req, res) => {
@@ -71,44 +61,116 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
-    res.end();
-    return;
-  }
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // Shared Storage API
-  if (req.url.startsWith('/api/')) {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const key = url.pathname.replace('/api/', '');
+  const host = req.headers.host || 'localhost:8080';
+  let pathname = req.url || '/';
+  try { pathname = new URL(pathname, `http://${host}`).pathname; } catch {}
 
+  // ===== STUDENTS API =====
+  if (pathname === '/api/students') {
     if (req.method === 'GET') {
       const data = readData();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(data[key] ?? null));
+      res.end(JSON.stringify({ success: true, data: data.students || [] }));
       return;
     }
-
-    if (req.method === 'POST' || req.method === 'PUT') {
+    if (req.method === 'POST') {
       let body = '';
       req.on('data', chunk => body += chunk);
       req.on('end', () => {
-        const data = readData();
         try {
-          data[key] = JSON.parse(body);
+          const s = JSON.parse(body);
+          if (!s.first_name || !s.last_name || !s.email) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'First name, last name, email required' }));
+            return;
+          }
+          const data = readData();
+          if (!data.students) data.students = [];
+          if (data.students.find(x => x.email === s.email)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Email already exists' }));
+            return;
+          }
+          const newStudent = {
+            id: generateId(),
+            first_name: s.first_name,
+            last_name: s.last_name,
+            email: s.email,
+            student_code: s.student_code || `STU-${Date.now()}`,
+            grade_level: s.grade_level || 'Grade 11',
+            password: s.password || '',
+            subject_ids: s.subject_ids || [],
+            created_at: new Date().toISOString()
+          };
+          data.students.unshift(newStudent);
+          writeData(data);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: newStudent }));
         } catch {
-          data[key] = body;
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid data' }));
         }
-        writeData(data);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
+      });
+      return;
+    }
+  }
+
+  if (pathname.startsWith('/api/students/')) {
+    const id = pathname.split('/')[3];
+    const data = readData();
+    if (!data.students) data.students = [];
+
+    if (req.method === 'GET') {
+      const student = data.students.find(x => x.id === id);
+      if (!student) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Not found' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: student }));
+      return;
+    }
+
+    if (req.method === 'PUT') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          const updates = JSON.parse(body);
+          const idx = data.students.findIndex(x => x.id === id);
+          if (idx === -1) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Not found' }));
+            return;
+          }
+          if (updates.email && data.students.find((x, i) => i !== idx && x.email === updates.email)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Email already exists' }));
+            return;
+          }
+          data.students[idx] = { ...data.students[idx], ...updates, updated_at: new Date().toISOString() };
+          writeData(data);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: data.students[idx] }));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid data' }));
+        }
       });
       return;
     }
 
     if (req.method === 'DELETE') {
-      const data = readData();
-      delete data[key];
+      const idx = data.students.findIndex(x => x.id === id);
+      if (idx === -1) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Not found' }));
+        return;
+      }
+      data.students.splice(idx, 1);
       writeData(data);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
@@ -116,85 +178,48 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // Static files (SPA fallback)
-  let filePath = path.join(DIST, req.url === '/' ? 'index.html' : req.url);
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-    filePath = path.join(DIST, 'index.html');
+  // ===== SUBJECTS API =====
+  if (pathname === '/api/subjects') {
+    const data = readData();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, data: data.subjects || [] }));
+    return;
   }
+
+  // ===== HEALTH =====
+  if (pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'OK' }));
+    return;
+  }
+
+  // ===== STATIC FILES =====
+  let filePath = path.join(DIST, pathname === '/' ? 'index.html' : pathname);
+  if (!filePath.startsWith(DIST)) filePath = path.join(DIST, 'index.html');
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) filePath = path.join(DIST, 'index.html');
   const ext = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || 'application/octet-stream';
   fs.readFile(filePath, (err, content) => {
-    if (err) {
-      res.writeHead(500);
-      res.end('Server Error');
-      return;
-    }
+    if (err) { res.writeHead(404); res.end('Not found'); return; }
     res.writeHead(200, { 'Content-Type': contentType });
     res.end(content, 'utf-8');
   });
 });
 
-async function startTunnel(port) {
-  try {
-    const localtunnel = require('localtunnel');
-    const tunnel = await localtunnel({ port });
-    console.log('');
-    console.log('==========================================');
-    console.log('  INTERNET PUBLIC URL (SHARE THIS)');
-    console.log('==========================================');
-    console.log('  ' + tunnel.url);
-    console.log('==========================================');
-    console.log('  Kahit mobile data o ibang WiFi —');
-    console.log('  buksan lang ang link na ito.');
-    console.log('==========================================');
-    return tunnel;
-  } catch (ltErr) {
-    try {
-      const ngrok = require('ngrok');
-      const url = await ngrok.connect({ addr: port, authtoken: process.env.NGROK_AUTH_TOKEN });
-      console.log('');
-      console.log('==========================================');
-      console.log('  INTERNET PUBLIC URL (SHARE THIS)');
-      console.log('==========================================');
-      console.log('  ' + url);
-      console.log('==========================================');
-      return { url, close: () => ngrok.disconnect() };
-    } catch (ngErr) {
-      console.log('');
-      console.log('==========================================');
-      console.log('  LOCAL NETWORK ONLY (SAME WIFI)');
-      console.log('==========================================');
-      console.log('  Para sa INTERNET/MOBILE DATA access:');
-      console.log('  1. Run: npm install localtunnel');
-      console.log('  2. Run ulit: node server.js');
-      console.log('==========================================');
-      return null;
-    }
-  }
+function openBrowser(url) {
+  const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+  exec(cmd, () => {});
 }
 
-findAvailablePort(PORT, (availablePort) => {
-  server.listen(availablePort, '0.0.0.0', async () => {
+findAvailablePort(PORT, (port) => {
+  server.listen(port, '0.0.0.0', () => {
     const ips = getNetworkIPs();
-    console.log('');
-    console.log('==========================================');
-    console.log('  SERVER RUNNING SUCCESSFULLY');
-    console.log('==========================================');
-    console.log('  Local:   http://localhost:' + availablePort);
-    ips.forEach(ip => {
-      console.log('  Network: http://' + ip + ':' + availablePort);
-    });
-    console.log('==========================================');
-    console.log('');
-    console.log('Admin Login: admin@school.edu / admin123');
-    console.log('');
-
-    await startTunnel(availablePort);
-
-    const { exec } = require('child_process');
-    const url = 'http://localhost:' + availablePort;
-    exec('start "" "' + url + '"', (err) => {
-      if (err) console.log('Please open your browser manually:', url);
-    });
+    console.log('\n========================================');
+    console.log('  SERVER RUNNING');
+    console.log('========================================');
+    console.log('  Local:   http://localhost:' + port);
+    ips.forEach(ip => console.log('  Network: http://' + ip + ':' + port));
+    console.log('========================================');
+    openBrowser('http://localhost:' + port);
   });
 });
