@@ -1,163 +1,258 @@
-const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const cors = require('cors');
+const http = require('http');
+const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { exec } = require('child_process');
 
-const app = express();
-const PORT = 5000;
+const PORT = 8080;
+const DIST = path.join(__dirname, 'dist');
+const DATA_FILE = path.join(__dirname, 'data.json');
 
-app.use(cors());
-app.use(express.json());
+// Initialize data.json
+if (!fs.existsSync(DATA_FILE)) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify({ students: [] }, null, 2));
+}
 
-const dbPath = path.join(__dirname, 'database.sqlite');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error opening database:', err);
-  } else {
-    console.log('Connected to SQLite database');
+const mimeTypes = {
+  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+  '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+};
 
-    db.run(`CREATE TABLE IF NOT EXISTS students (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      age INTEGER,
-      grade TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`, (err) => {
-      if (err) {
-        console.error('Error creating table:', err);
-      } else {
-        console.log('Students table ready');
+function getNetworkIPs() {
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+  for (const name in interfaces) {
+    for (const iface of interfaces[name]) {
+      if ((iface.family === 'IPv4' || iface.family === 4) && !iface.internal) {
+        ips.push(iface.address);
       }
-    });
+    }
   }
-});
+  return ips;
+}
 
-// GET all students
-app.get('/api/students', (req, res) => {
-  db.all('SELECT * FROM students ORDER BY created_at DESC', [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json({ success: true, data: rows });
+function findAvailablePort(startPort, callback) {
+  const testServer = http.createServer();
+  testServer.listen(startPort, '0.0.0.0', () => {
+    const port = testServer.address().port;
+    testServer.close(() => callback(port));
   });
-});
-
-// GET single student
-app.get('/api/students/:id', (req, res) => {
-  const { id } = req.params;
-  db.get('SELECT * FROM students WHERE id = ?', [id], (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!row) {
-      return res.status(404).json({ error: 'Student not found' });
-    }
-    res.json({ success: true, data: row });
+  testServer.on('error', () => {
+    findAvailablePort(startPort + 1, callback);
   });
-});
+}
 
-// CREATE student
-app.post('/api/students', (req, res) => {
-  const { first_name, last_name, email, age, grade } = req.body;
-  
-  if (!first_name || !last_name || !email) {
-    return res.status(400).json({ error: 'First name, last name, and email are required' });
+function readData() {
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
+  catch { return { students: [] }; }
+}
+
+function writeData(data) {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('Write error:', err.message);
   }
+}
 
-  const sql = `INSERT INTO students (first_name, last_name, email, age, grade) 
-               VALUES (?, ?, ?, ?, ?)`;
-  
-  db.run(sql, [first_name, last_name, email, age || null, grade || null], function(err) {
-    if (err) {
-      if (err.message.includes('UNIQUE constraint failed')) {
-        return res.status(400).json({ error: 'Email already exists' });
-      }
-      return res.status(500).json({ error: err.message });
-    }
-    res.status(201).json({ 
-      success: true, 
-      message: 'Student created successfully',
-      data: { id: this.lastID, first_name, last_name, email, age, grade }
-    });
-  });
-});
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
 
-app.put('/api/students/:id', (req, res) => {
-  const { id } = req.params;
-  const { first_name, last_name, email, age, grade } = req.body;
+const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (!first_name || !last_name || !email) {
-    return res.status(400).json({ error: 'First name, last name, and email are required' });
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
   }
 
-  const sql = `UPDATE students 
-               SET first_name = ?, last_name = ?, email = ?, age = ?, grade = ? 
-               WHERE id = ?`;
-  
-  db.run(sql, [first_name, last_name, email, age || null, grade || null, id], function(err) {
-    if (err) {
-      if (err.message.includes('UNIQUE constraint failed')) {
-        return res.status(400).json({ error: 'Email already exists' });
+  const host = req.headers.host || 'localhost:8080';
+  let pathname = req.url || '/';
+
+  try {
+    const parsedUrl = new URL(pathname, `http://${host}`);
+    pathname = parsedUrl.pathname;
+  } catch {
+    // fallback if URL parsing fails
+  }
+
+  // ===== API: GET ALL / POST NEW =====
+  if (pathname === '/api/students') {
+    if (req.method === 'GET') {
+      const data = readData();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: data.students || [] }));
+      return;
+    }
+
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          const student = JSON.parse(body);
+          if (!student.first_name || !student.last_name || !student.email) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'First name, last name, and email are required' }));
+            return;
+          }
+          const data = readData();
+          if (!data.students) data.students = [];
+          if (data.students.find(s => s.email === student.email)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Email already exists' }));
+            return;
+          }
+          const newStudent = {
+            id: generateId(),
+            first_name: student.first_name,
+            last_name: student.last_name,
+            email: student.email,
+            age: student.age || null,
+            grade: student.grade || null,
+            created_at: new Date().toISOString()
+          };
+          data.students.unshift(newStudent);
+          writeData(data);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: newStudent }));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+        }
+      });
+      return;
+    }
+  }
+
+  // ===== API: GET ONE / UPDATE / DELETE =====
+  if (pathname.startsWith('/api/students/')) {
+    const parts = pathname.split('/').filter(p => p);
+    const id = parts[2];
+
+    if (req.method === 'GET') {
+      const data = readData();
+      const student = (data.students || []).find(s => s.id === id);
+      if (!student) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Not found' }));
+        return;
       }
-      return res.status(500).json({ error: err.message });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: student }));
+      return;
     }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Student not found' });
+
+    if (req.method === 'PUT') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          const updates = JSON.parse(body);
+          const data = readData();
+          if (!data.students) data.students = [];
+          const index = data.students.findIndex(s => s.id === id);
+          if (index === -1) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Not found' }));
+            return;
+          }
+          if (updates.email && data.students.find((s, i) => i !== index && s.email === updates.email)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Email already exists' }));
+            return;
+          }
+          data.students[index] = {
+            ...data.students[index],
+            first_name: updates.first_name || data.students[index].first_name,
+            last_name: updates.last_name || data.students[index].last_name,
+            email: updates.email || data.students[index].email,
+            age: updates.age !== undefined ? updates.age : data.students[index].age,
+            grade: updates.grade !== undefined ? updates.grade : data.students[index].grade,
+            updated_at: new Date().toISOString()
+          };
+          writeData(data);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: data.students[index] }));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+        }
+      });
+      return;
     }
-    res.json({ 
-      success: true, 
-      message: 'Student updated successfully',
-      data: { id: parseInt(id), first_name, last_name, email, age, grade }
-    });
-  });
-});
 
+    if (req.method === 'DELETE') {
+      const data = readData();
+      if (!data.students) data.students = [];
+      const index = data.students.findIndex(s => s.id === id);
+      if (index === -1) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Not found' }));
+        return;
+      }
+      data.students.splice(index, 1);
+      writeData(data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Deleted' }));
+      return;
+    }
+  }
 
-app.delete('/api/students/:id', (req, res) => {
-  const { id } = req.params;
+  // ===== HEALTH CHECK =====
+  if (pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'OK', node: process.version }));
+    return;
+  }
+
+  // ===== STATIC FILES =====
+  let filePath = path.join(DIST, pathname === '/' ? 'index.html' : pathname);
   
-  db.run('DELETE FROM students WHERE id = ?', [id], function(err) {
+  if (!filePath.startsWith(DIST)) {
+    filePath = path.join(DIST, 'index.html');
+  }
+  
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    filePath = path.join(DIST, 'index.html');
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+  fs.readFile(filePath, (err, content) => {
     if (err) {
-      return res.status(500).json({ error: err.message });
+      res.writeHead(404, { 'Content-Type': 'text/html' });
+      res.end('<h1>404 - Not Found</h1><p>Run: npm run build</p>');
+      return;
     }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: 'Student not found' });
-    }
-    res.json({ success: true, message: 'Student deleted successfully' });
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(content, 'utf-8');
   });
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Server is running' });
-});
+function openBrowser(url) {
+  const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+  exec(cmd, () => {});
+}
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`API endpoints:`);
-  console.log(`  GET    /api/students`);
-  console.log(`  GET    /api/students/:id`);
-  console.log(`  POST   /api/students`);
-  console.log(`  PUT    /api/students/:id`);
-  console.log(`  DELETE /api/students/:id`);
-});
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-  db.close((err) => {
-    if (err) {
-      console.error(err.message);
-    }
-    console.log('Database connection closed');
-    process.exit(0);
+findAvailablePort(PORT, (port) => {
+  server.listen(port, '0.0.0.0', () => {
+    const ips = getNetworkIPs();
+    console.log('\n========================================');
+    console.log('  SERVER RUNNING - Node', process.version);
+    console.log('========================================');
+    console.log('  Local:   http://localhost:' + port);
+    ips.forEach(ip => console.log('  Network: http://' + ip + ':' + port));
+    console.log('========================================');
+    console.log('  API: /api/students');
+    console.log('========================================');
+    openBrowser('http://localhost:' + port);
   });
 });
