@@ -168,7 +168,7 @@ export default function Login() {
       }
       if (user?.account_status === 'blocked') {
         const blockedStudent = user.role === 'student' ? db.students.getAll().find(student => student.user_id === user.id) : null;
-        setError(blockedStudent?.second_chance_used ? 'This account is permanently blocked because attendance drop-out was repeated after the second chance.' : 'This account is blocked because of attendance drop-out status. Please contact the administrator for a second chance.');
+        setError(blockedStudent?.second_chance_used ? '🚫 PERMANENTLY BANNED — You wasted your second chance. Repeated absences after admin unblocking resulted in a permanent ban. Contact the school office.' : '⚠️ ACCOUNT BLOCKED — Excessive consecutive absences detected. You may request ONE second chance from the administrator. Use it wisely.');
         setLoading(false);
         return;
       }
