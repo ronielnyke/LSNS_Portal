@@ -165,7 +165,7 @@ export default function ReportsPage() {
               <div className="report-school-logo">
                 <GraduationCap className="report-logo-fallback" size={38} color="var(--primary)" />
                 <img
-                  src="/logo.jpg"
+                  src="/logo.png"
                   alt="School logo"
                   onLoad={event => event.currentTarget.previousElementSibling?.classList.add('is-hidden')}
                   onError={event => { event.currentTarget.style.display = 'none'; }}
@@ -266,7 +266,7 @@ export default function ReportsPage() {
             <div className="report-school-brand">
               <div className="report-school-logo">
                 <GraduationCap className="report-logo-fallback" size={38} color="var(--primary)" />
-                <img src="/logo.jpg" alt="School logo" onError={event => { event.currentTarget.style.display = 'none'; }} />
+                <img src="/logo.png" alt="School logo" onError={event => { event.currentTarget.style.display = 'none'; }} />
               </div>
               <div>
                 <p className="report-republic">Republic of the Philippines</p>

@@ -31,7 +31,7 @@ function LoadingScreen() {
           <GraduationCap className="brand-logo-fallback" size={52} color="var(--primary)" />
           <img
             className="brand-logo-image"
-            src="/logo.jpg"
+            src="/logo.png"
             alt="School logo"
             onLoad={(event) => event.currentTarget.previousElementSibling?.classList.add('is-hidden')}
             onError={(event) => { event.currentTarget.style.display = 'none'; }}
