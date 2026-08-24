@@ -23,6 +23,9 @@ export interface Student {
   subject_ids?: number[];
   drop_out_overridden?: boolean;
   second_chance_used?: boolean;
+  final_ban: boolean;
+  blocked_reason?: string;
+  blocked_at?: string;
   attendance_review_from?: string;
   academic_status?: 'regular' | 'repeat_first_semester' | 'permanently_blocked';
   current_semester?: 1 | 2;
@@ -116,3 +119,4 @@ export type DBData = {
   logs: LogEntry[];
 };
 
+export const MAX_CONSECUTIVE_ABSENCES = 3;

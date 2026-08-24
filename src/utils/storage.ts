@@ -24,7 +24,8 @@ export function getMaxConsecutiveAbsences(studentId: number): number {
   let previous: Date | null = null;
   for (const date of absentDates) {
     const currentDate = new Date(date);
-    current = previous && currentDate.getTime() - previous.getTime() === 86400000 ? current + 1 : 1;
+    const diffDays = previous ? Math.round((currentDate.getTime() - previous.getTime()) / 86400000) : 0;
+    current = previous && diffDays === 1 ? current + 1 : 1;
     max = Math.max(max, current);
     previous = currentDate;
   }
@@ -32,15 +33,17 @@ export function getMaxConsecutiveAbsences(studentId: number): number {
 }
 
 export function isStudentDroppedOut(student: Student): boolean {
-  return !student.drop_out_overridden && getMaxConsecutiveAbsences(student.id) >= 3;
+  return getMaxConsecutiveAbsences(student.id) >= 3;
 }
 
 export function enforceStudentAttendanceBlock(studentId: number): void {
   const student = db.students.getById(studentId);
   if (!student || getMaxConsecutiveAbsences(studentId) < 3) return;
-  const account = db.users.getById(student.user_id);
-  if (account?.account_status === 'blocked') return;
   const permanent = student.second_chance_used === true;
+
+  const account = db.users.getById(student.user_id);
+  if (account?.account_status === 'blocked' && !permanent) return;
+
   db.users.update(student.user_id, user => ({ ...user, account_status: 'blocked', blocked_reason: permanent ? 'Permanent block: attendance drop-out repeated after second chance.' : 'Automatic attendance drop-out: 3 consecutive absences.' }));
   if (permanent) db.students.update(studentId, current => ({ ...current, drop_out_overridden: false, academic_status: 'permanently_blocked', current_semester: 1, graduation_eligible: false }));
 }
@@ -298,4 +301,4 @@ export function getRoleData(): Student | Teacher | null {
 export function clearAllData(): void {
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem('sms_auth');
-}
+};
