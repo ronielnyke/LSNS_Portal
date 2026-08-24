@@ -23,7 +23,7 @@ export interface Student {
   subject_ids?: number[];
   drop_out_overridden?: boolean;
   second_chance_used?: boolean;
-  final_ban: boolean;
+  final_ban?: boolean;
   blocked_reason?: string;
   blocked_at?: string;
   attendance_review_from?: string;
@@ -45,6 +45,7 @@ export interface Teacher {
 export type TrackType = 'core' | 'academic_math' | 'academic_research' | 'tvl';
 
 export interface Subject {
+  grade_level: any;
   id: number;
   code: string;
   name: string;
