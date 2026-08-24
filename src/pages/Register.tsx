@@ -53,6 +53,7 @@ export default function Register() {
           section_id: null,
           subject_ids: [],
           created_at: new Date().toISOString(),
+          final_ban: false
         };
         db.students.add(student);
       } else {
