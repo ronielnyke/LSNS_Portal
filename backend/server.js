@@ -6,18 +6,16 @@ const path = require('path');
 const app = express();
 const PORT = 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Database setup
 const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Error opening database:', err);
   } else {
     console.log('Connected to SQLite database');
-    // Create table if not exists
+
     db.run(`CREATE TABLE IF NOT EXISTS students (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       first_name TEXT NOT NULL,
@@ -86,7 +84,6 @@ app.post('/api/students', (req, res) => {
   });
 });
 
-// UPDATE student
 app.put('/api/students/:id', (req, res) => {
   const { id } = req.params;
   const { first_name, last_name, email, age, grade } = req.body;
@@ -117,7 +114,7 @@ app.put('/api/students/:id', (req, res) => {
   });
 });
 
-// DELETE student
+
 app.delete('/api/students/:id', (req, res) => {
   const { id } = req.params;
   
